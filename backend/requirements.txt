@@ -1,0 +1,26 @@
+# Web Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Database
+sqlalchemy>=2.0.36
+alembic>=1.13.1
+pymysql>=1.1.0
+cryptography>=42.0.0
+
+# Async task queue (MySQL used as broker + backend — no Redis needed)
+celery[sqlalchemy]>=5.4.0
+
+# Scraping
+playwright>=1.44.0
+
+# Config / Validation
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
+python-dotenv>=1.0.1
+
+# Utilities
+tenacity>=8.3.0
+
+# AI keyword generation — Gemini free tier (no credit card required)
+google-genai>=1.0.0

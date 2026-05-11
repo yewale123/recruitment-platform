@@ -1,0 +1,30 @@
+# Environment variables (contains passwords/API keys)
+.env
+*.env
+
+# LinkedIn session cookies (sensitive)
+linkedin_session.json
+naukri_session.json
+indeed_session.json
+
+# Python virtual environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
+# Node modules
+node_modules/
+dist/
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+celerybeat-schedule
