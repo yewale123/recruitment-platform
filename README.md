@@ -38,30 +38,3 @@ cd frontend
 npm install
 ```
 
----
-
-## Run
-
-```bash
-# Terminal 1 — API
-cd backend && .\start_api.bat
-
-# Terminal 2 — Worker
-cd backend && .\start_worker.bat
-
-# Terminal 3 — Frontend
-cd frontend && .\start_frontend.bat
-```
-
-Open **http://localhost:5173**
-
----
-
-## First Time LinkedIn Setup
-
-```bash
-cd backend
-python scripts/linkedin_login.py
-```
-
-Log in to LinkedIn in the browser → press Enter to save session.
