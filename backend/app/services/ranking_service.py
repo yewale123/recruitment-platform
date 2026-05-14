@@ -62,8 +62,12 @@ def score_and_rank(
 ) -> list[Candidate]:
     all_skills_raw = _split_skills(request.required_skills)
     required_skills = normalize_skills(all_skills_raw)
-    # First 2 skills in the list are treated as critical (must-have)
     critical_skills = normalize_skills(all_skills_raw[:2]) if all_skills_raw else required_skills
+
+    # Pre-expand alias sets once — reused for every candidate instead of recomputing each time
+    required_expanded = _expand_aliases(required_skills)
+    critical_expanded = _expand_aliases(critical_skills)
+    secondary_skills_expanded = required_expanded - critical_expanded
 
     keywords = [kw.lower().strip() for kw in (request.keywords or [])]
     req_location = normalize_location(request.location or "")
@@ -71,7 +75,7 @@ def score_and_rank(
     exp_max = request.experience_max
 
     for c in candidates:
-        skills_score = _skills_score(c, required_skills, critical_skills)
+        skills_score = _skills_score(c, required_skills, critical_expanded, secondary_skills_expanded)
         experience_score = _experience_score(c, exp_min, exp_max)
         location_score = _location_score(c, req_location)
         context_score = _context_score(c, keywords, exp_min, exp_max)
@@ -117,7 +121,8 @@ def _expand_aliases(skills: set[str]) -> set[str]:
 def _skills_score(
     candidate: Candidate,
     required_skills: set[str],
-    critical_skills: set[str],
+    critical_expanded: set[str],
+    secondary_skills_expanded: set[str],
 ) -> float:
     if not required_skills:
         return 40.0
@@ -129,26 +134,23 @@ def _skills_score(
     if not candidate_skills:
         candidate_skills = {s for s in required_skills if s in profile_text}
     else:
-        # Even with a skills list, headline often has extra skills not in the list
         text_skills = {s for s in required_skills if s in profile_text}
         candidate_skills = candidate_skills | text_skills
 
-    # Expand aliases for fuzzy matching (node == node.js, etc.)
+    # Expand aliases for this candidate only (required sets already pre-expanded)
     candidate_expanded = _expand_aliases(candidate_skills)
-    required_expanded = _expand_aliases(required_skills)
 
-    # Critical skills: first 2 required — worth 60% of skills score
-    critical_matched = len(candidate_expanded & _expand_aliases(critical_skills))
-    critical_total = len(critical_skills) if critical_skills else 1
+    # Critical skills: first 2 — worth 60% of skills score
+    critical_total = len(critical_expanded) if critical_expanded else 1
+    critical_matched = len(candidate_expanded & critical_expanded)
     critical_pts = (critical_matched / critical_total) * 24.0
 
     # Secondary skills: remaining — worth 40% of skills score
-    secondary_skills = required_expanded - _expand_aliases(critical_skills)
-    if secondary_skills:
-        secondary_matched = len(candidate_expanded & secondary_skills)
-        secondary_pts = (secondary_matched / len(secondary_skills)) * 16.0
+    if secondary_skills_expanded:
+        secondary_matched = len(candidate_expanded & secondary_skills_expanded)
+        secondary_pts = (secondary_matched / len(secondary_skills_expanded)) * 16.0
     else:
-        # Only critical skills were specified — scale up
+        # Only critical skills were specified — scale up to full 40
         secondary_pts = 0.0
         critical_pts = (critical_matched / critical_total) * 40.0
 

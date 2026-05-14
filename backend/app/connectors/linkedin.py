@@ -249,35 +249,42 @@ class LinkedInConnector(BasePlatformConnector):
     async def _enrich_candidates(
         self, context, cards: list[RawCandidate], enrich_limit: int
     ) -> list[RawCandidate]:
-        """Visit profile pages for top N candidates. Merges with card data for any null fields."""
-        enriched: list[RawCandidate] = []
-        for i, c in enumerate(cards):
-            if c.profile_url and i < enrich_limit:
+        """
+        Visit profile pages for top N candidates — 3 pages concurrently.
+        3 concurrent visits keeps speed up without triggering LinkedIn rate limits.
+        Cards beyond enrich_limit are returned as-is (card-level data only).
+        """
+        to_enrich = [c for c in cards[:enrich_limit] if c.profile_url]
+        rest = cards[enrich_limit:]
+
+        sem = asyncio.Semaphore(3)  # max 3 profile pages open at once
+
+        async def _visit(card: RawCandidate) -> RawCandidate:
+            async with sem:
                 try:
                     profile_page = await context.new_page()
-                    full = await self._parse_profile_page(profile_page, c.profile_url)
+                    full = await self._parse_profile_page(profile_page, card.profile_url)
                     await profile_page.close()
+                    await self._random_delay()
                     if full:
-                        # Profile page wins; card fills any nulls
-                        merged = RawCandidate(
+                        return RawCandidate(
                             platform=full.platform,
                             platform_id=full.platform_id,
-                            full_name=full.full_name or c.full_name,
-                            headline=full.headline or c.headline,
-                            location=full.location or c.location,
+                            full_name=full.full_name or card.full_name,
+                            headline=full.headline or card.headline,
+                            location=full.location or card.location,
                             experience_years=full.experience_years,
-                            skills=full.skills if full.skills else c.skills,
-                            profile_url=full.profile_url or c.profile_url,
+                            skills=full.skills if full.skills else card.skills,
+                            profile_url=full.profile_url or card.profile_url,
                             summary=full.summary,
                             raw_data=full.raw_data,
                         )
-                        enriched.append(merged)
-                        await self._random_delay()
-                        continue
                 except Exception as e:
                     print(f"[LinkedIn] Profile enrich failed: {e}")
-            enriched.append(c)
-        return enriched
+                return card
+
+        enriched = list(await asyncio.gather(*[_visit(c) for c in to_enrich]))
+        return enriched + rest
 
     async def _scroll_page(self, page) -> None:
         await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight / 2)")
