@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # AI keyword enhancement (optional — leave blank to disable)
     GEMINI_API_KEY: str = ""
 
+    # GitHub API token (optional but strongly recommended — raises limit from 60/hr to 5000/hr)
+    # Generate at: github.com → Settings → Developer settings → Personal access tokens
+    GITHUB_TOKEN: str = ""
+
     @property
     def _encoded_password(self) -> str:
         return quote_plus(self.DB_PASSWORD)
