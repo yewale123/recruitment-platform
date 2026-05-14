@@ -12,23 +12,65 @@ from app.models.candidate import Candidate
 from app.models.recruitment_request import RecruitmentRequest
 from app.utils.text_utils import normalize_skills, normalize_location, same_region
 
-# Skills that are "close enough" to get partial credit
+# Skills that are "close enough" to get partial credit.
+# Parent language entries list their frameworks as aliases so that GitHub
+# candidates (who have language names) match framework requirements.
+# Framework entries list their parent language so LinkedIn candidates
+# (who list frameworks) match language requirements — and vice versa.
 _SKILL_ALIASES: dict[str, list[str]] = {
-    "javascript": ["js", "ecmascript", "es6", "es2015"],
-    "typescript": ["ts"],
-    "python":     ["py"],
-    "node.js":    ["node", "nodejs"],
-    "react":      ["reactjs", "react.js"],
-    "angular":    ["angularjs"],
-    "vue":        ["vuejs", "vue.js"],
+    # ── Language → frameworks (GitHub reports language names, not frameworks) ──
+    "javascript": ["js", "ecmascript", "es6", "es2015",
+                   "react", "reactjs", "react.js",
+                   "angular", "angularjs",
+                   "vue", "vuejs", "vue.js",
+                   "node.js", "node", "nodejs",
+                   "express", "expressjs",
+                   "next.js", "nextjs", "nuxt",
+                   "jquery", "svelte", "sveltekit"],
+    "typescript": ["ts",
+                   "angular", "angularjs",
+                   "next.js", "nextjs"],
+    "python":     ["py",
+                   "django", "flask", "fastapi", "tornado",
+                   "pandas", "numpy", "scipy",
+                   "tensorflow", "tf", "pytorch", "keras",
+                   "scikit-learn", "sklearn", "xgboost",
+                   "jupyter notebook", "jupyter", "ipython",
+                   "celery", "sqlalchemy", "pydantic"],
+    "java":       ["spring", "spring boot", "springboot",
+                   "hibernate", "maven", "gradle",
+                   "micronaut", "quarkus"],
+    "ruby":       ["rails", "ruby on rails", "sinatra"],
+    "php":        ["laravel", "symfony", "codeigniter"],
+    "go":         ["golang", "gin", "echo", "fiber"],
+    "swift":      ["swiftui", "ios"],
+    "kotlin":     ["android", "jetpack compose"],
+
+    # ── Framework synonyms + parent language (bidirectional) ─────────────────
+    "node.js":    ["node", "nodejs", "javascript", "js"],
+    "react":      ["reactjs", "react.js", "javascript", "js"],
+    "angular":    ["angularjs", "typescript", "ts", "javascript", "js"],
+    "vue":        ["vuejs", "vue.js", "javascript", "js"],
+    "next.js":    ["nextjs", "javascript", "js", "typescript", "ts"],
+    "express":    ["expressjs", "javascript", "js"],
+    "django":     ["python", "py"],
+    "flask":      ["python", "py"],
+    "fastapi":    ["python", "py"],
+    "tensorflow": ["tf", "python", "py"],
+    "pytorch":    ["python", "py"],
+    "pandas":     ["python", "py"],
+    "numpy":      ["python", "py"],
+    "scikit-learn": ["sklearn", "python", "py"],
+    "jupyter notebook": ["jupyter", "ipython", "python", "py"],
+    "spring boot": ["spring", "springboot", "java"],
+
+    # ── Infrastructure / DB synonyms ──────────────────────────────────────────
     "postgresql": ["postgres", "psql"],
     "mongodb":    ["mongo"],
     "kubernetes": ["k8s"],
     "machine learning": ["ml"],
     "artificial intelligence": ["ai"],
     "rest api":   ["restful", "rest apis", "api"],
-    "spring boot": ["spring"],
-    "scikit-learn": ["sklearn"],
 }
 
 _SENIORITY_SIGNALS = {
