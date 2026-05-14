@@ -2,7 +2,29 @@ import { useState } from 'react'
 import ScoreBar from './ScoreBar'
 import ScoreBreakdown from './ScoreBreakdown'
 
-export default function CandidateTable({ candidates, requiredSkills = [] }) {
+function EmailCell({ email, status, rank, requestStatus }) {
+  if (email && status === 'found') {
+    return (
+      <a href={`mailto:${email}`} style={{ fontSize: '.78rem', color: 'var(--primary)', wordBreak: 'break-all' }}>
+        {email}
+      </a>
+    )
+  }
+  if (email && status === 'guessed') {
+    return (
+      <span title="Pattern-generated — not verified" style={{ fontSize: '.78rem', color: 'var(--gray-600)', wordBreak: 'break-all' }}>
+        ~{email}
+      </span>
+    )
+  }
+  // Show spinner only while request is still running AND enrichment not done yet
+  if (rank <= 10 && !status && requestStatus !== 'completed' && requestStatus !== 'failed') {
+    return <span className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+  }
+  return <span className="text-muted">—</span>
+}
+
+export default function CandidateTable({ candidates, requiredSkills = [], requestStatus = 'completed' }) {
   const [expandedId, setExpandedId] = useState(null)
   const [sortKey, setSortKey] = useState('rank')
   const [sortDir, setSortDir] = useState('asc')
@@ -57,6 +79,7 @@ export default function CandidateTable({ candidates, requiredSkills = [] }) {
               <th onClick={() => handleSort('experience_years')}>Exp{arrow('experience_years')}</th>
               <th>Skills</th>
               <th onClick={() => handleSort('suitability_score')}>Score{arrow('suitability_score')}</th>
+              <th>Email</th>
               <th>Profile</th>
             </tr>
           </thead>
@@ -92,6 +115,9 @@ export default function CandidateTable({ candidates, requiredSkills = [] }) {
                   <td style={{ minWidth: 140 }}>
                     <ScoreBar score={c.suitability_score} />
                   </td>
+                  <td onClick={e => e.stopPropagation()}>
+                    <EmailCell email={c.email} status={c.email_status} rank={c.rank} requestStatus={requestStatus} />
+                  </td>
                   <td>
                     {c.profile_url
                       ? <a href={c.profile_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="btn btn-outline btn-sm">View</a>
@@ -100,7 +126,7 @@ export default function CandidateTable({ candidates, requiredSkills = [] }) {
                 </tr>
                 {expandedId === c.id && (
                   <tr key={`${c.id}-breakdown`}>
-                    <td colSpan={7} style={{ padding: 0 }}>
+                    <td colSpan={8} style={{ padding: 0 }}>
                       <ScoreBreakdown breakdown={c.score_breakdown} />
                     </td>
                   </tr>

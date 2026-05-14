@@ -280,7 +280,7 @@ export default function RequestDetailPage() {
                 Click a row to expand the score breakdown. Blue chips are matched skills.
               </p>
             )}
-            <CandidateTable candidates={candidates} requiredSkills={request.required_skills} />
+            <CandidateTable candidates={candidates} requiredSkills={request.required_skills} requestStatus={request.status} />
           </div>
         </div>
       )}
