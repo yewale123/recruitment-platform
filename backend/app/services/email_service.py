@@ -2,20 +2,29 @@
 Email enrichment service.
 
 Strategy per platform:
-  GitHub   → extract public email from raw_data (accurate, free)
-  LinkedIn → scan headline+summary for known company, build email pattern
+  GitHub   → extract public email from raw_data (free, accurate)
+  LinkedIn → find company domain from headline → call Snov.io with name+domain
+             Snov.io only called when domain is found (saves credits)
 
 email_status values:
-  'found'     — real email confirmed from profile (GitHub public email)
-  'guessed'   — pattern-generated from name + company domain (LinkedIn)
+  'found'     — verified email from Snov.io or GitHub public profile
+  'guessed'   — pattern-generated fallback (no Snov.io credits used)
   'not_found' — could not determine any email
 """
 
+import json
 import re
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+
+from app.config import get_settings
 from app.models.candidate import Candidate
 
-# Company name → email domain (word-boundary matched against headline/summary)
-# Sorted longest-first so "tech mahindra" matches before "mahindra"
+settings = get_settings()
+
+# ── Company domain dictionary ─────────────────────────────────────────────────
+
 _COMPANY_DOMAINS: dict[str, str] = {
     # India IT services
     "tata consultancy services": "tcs.com",
@@ -47,87 +56,74 @@ _COMPANY_DOMAINS: dict[str, str] = {
     "mastech":                   "mastech.com",
     "birlasoft":                 "birlasoft.com",
     "cyient":                    "cyient.com",
-    "mphasis":                   "mphasis.com",
     "sonata software":           "sonata-software.com",
     "sonata":                    "sonata-software.com",
-    "sasken":                    "sasken.com",
     "tata elxsi":                "tataelxsi.com",
     "coforge":                   "coforge.com",
     # India product/startups
-    "flipkart":    "flipkart.com",
-    "swiggy":      "swiggy.in",
-    "zomato":      "zomato.com",
-    "paytm":       "paytm.com",
-    "razorpay":    "razorpay.com",
-    "freshworks":  "freshworks.com",
-    "zoho":        "zoho.com",
-    "phonepe":     "phonepe.com",
-    "meesho":      "meesho.com",
-    "dream11":     "dream11.com",
-    "cred":        "cred.club",
-    "zepto":       "zeptonow.com",
-    "nykaa":       "nykaa.com",
-    "byju":        "byjus.com",
-    "byjus":       "byjus.com",
-    "ola cabs":    "olacabs.com",
-    "olacabs":     "olacabs.com",
-    "ola":         "olacabs.com",
-    "sharechat":   "sharechat.com",
-    "moj":         "sharechat.com",
-    "slice":       "sliceit.com",
-    "cashfree":    "cashfree.com",
-    "groww":       "groww.in",
-    "zerodha":     "zerodha.com",
-    "upstox":      "upstox.com",
-    "lenskart":    "lenskart.com",
-    "mamaearth":   "mamaearth.in",
-    "delhivery":   "delhivery.com",
-    "rivigo":      "rivigo.com",
-    "urbanclap":   "urbancompany.com",
+    "flipkart":      "flipkart.com",
+    "swiggy":        "swiggy.in",
+    "zomato":        "zomato.com",
+    "paytm":         "paytm.com",
+    "razorpay":      "razorpay.com",
+    "freshworks":    "freshworks.com",
+    "zoho":          "zoho.com",
+    "phonepe":       "phonepe.com",
+    "meesho":        "meesho.com",
+    "dream11":       "dream11.com",
+    "cred":          "cred.club",
+    "zepto":         "zeptonow.com",
+    "nykaa":         "nykaa.com",
+    "byju":          "byjus.com",
+    "byjus":         "byjus.com",
+    "ola cabs":      "olacabs.com",
+    "olacabs":       "olacabs.com",
+    "ola":           "olacabs.com",
+    "sharechat":     "sharechat.com",
+    "cashfree":      "cashfree.com",
+    "groww":         "groww.in",
+    "zerodha":       "zerodha.com",
+    "upstox":        "upstox.com",
+    "lenskart":      "lenskart.com",
+    "delhivery":     "delhivery.com",
     "urban company": "urbancompany.com",
+    "urbancompany":  "urbancompany.com",
     # Global big tech
-    "google":      "google.com",
-    "microsoft":   "microsoft.com",
-    "amazon":      "amazon.com",
-    "meta":        "meta.com",
-    "facebook":    "meta.com",
-    "apple":       "apple.com",
-    "netflix":     "netflix.com",
-    "uber":        "uber.com",
-    "airbnb":      "airbnb.com",
-    "twitter":     "twitter.com",
-    "linkedin":    "linkedin.com",
-    "ibm":         "ibm.com",
-    "oracle":      "oracle.com",
-    "salesforce":  "salesforce.com",
-    "adobe":       "adobe.com",
-    "intuit":      "intuit.com",
-    "atlassian":   "atlassian.com",
-    "thoughtworks":"thoughtworks.com",
-    "deloitte":    "deloitte.com",
-    "pwc":         "pwc.com",
-    "kpmg":        "kpmg.com",
-    "servicenow":  "servicenow.com",
-    "vmware":      "vmware.com",
-    "sap":         "sap.com",
-    "samsung":     "samsung.com",
-    "qualcomm":    "qualcomm.com",
-    "intel":       "intel.com",
-    "amd":         "amd.com",
-    "nvidia":      "nvidia.com",
-    "paypal":      "paypal.com",
-    "stripe":      "stripe.com",
-    "shopify":     "shopify.com",
-    "twilio":      "twilio.com",
-    "datadog":     "datadoghq.com",
-    "mongodb":     "mongodb.com",
-    "elastic":     "elastic.co",
-    "github":      "github.com",
-    "gitlab":      "gitlab.com",
+    "google":        "google.com",
+    "microsoft":     "microsoft.com",
+    "amazon":        "amazon.com",
+    "meta":          "meta.com",
+    "facebook":      "meta.com",
+    "apple":         "apple.com",
+    "netflix":       "netflix.com",
+    "uber":          "uber.com",
+    "airbnb":        "airbnb.com",
+    "ibm":           "ibm.com",
+    "oracle":        "oracle.com",
+    "salesforce":    "salesforce.com",
+    "adobe":         "adobe.com",
+    "intuit":        "intuit.com",
+    "atlassian":     "atlassian.com",
+    "thoughtworks":  "thoughtworks.com",
+    "deloitte":      "deloitte.com",
+    "pwc":           "pwc.com",
+    "kpmg":          "kpmg.com",
+    "servicenow":    "servicenow.com",
+    "vmware":        "vmware.com",
+    "sap":           "sap.com",
+    "samsung":       "samsung.com",
+    "qualcomm":      "qualcomm.com",
+    "intel":         "intel.com",
+    "nvidia":        "nvidia.com",
+    "paypal":        "paypal.com",
+    "stripe":        "stripe.com",
+    "shopify":       "shopify.com",
+    "mongodb":       "mongodb.com",
+    "github":        "github.com",
+    "gitlab":        "gitlab.com",
 }
 
-# Pre-compile regex patterns (word boundary around each company name)
-# Sorted longest-first so multi-word names match before single words
+# Pre-compile regex for word-boundary matching (longest first)
 _COMPILED = sorted(
     [
         (re.compile(r'\b' + re.escape(name) + r'\b', re.IGNORECASE), domain)
@@ -137,10 +133,13 @@ _COMPILED = sorted(
 )
 
 
+# ── Public API ────────────────────────────────────────────────────────────────
+
 def find_email(candidate: Candidate) -> tuple[str | None, str]:
     """
     Returns (email, status): 'found' | 'guessed' | 'not_found'
     """
+    # GitHub: use public email from raw_data
     if candidate.platform == "github":
         raw = candidate.raw_data or {}
         email = raw.get("email") or ""
@@ -148,22 +147,108 @@ def find_email(candidate: Candidate) -> tuple[str | None, str]:
             return email.lower().strip(), "found"
         return None, "not_found"
 
-    # LinkedIn / others
+    # LinkedIn: find domain → call Snov.io → fallback to pattern
     if not candidate.full_name:
         return None, "not_found"
 
-    # Scan headline + summary for known company
     text = " ".join(filter(None, [candidate.headline, candidate.summary]))
     domain = _find_domain(text)
     if not domain:
         return None, "not_found"
 
-    email = _build_email(candidate.full_name, domain)
-    return (email, "guessed") if email else (None, "not_found")
+    name_parts = _split_name(candidate.full_name)
+    if not name_parts:
+        return None, "not_found"
 
+    first, last = name_parts
+
+    # Try Snov.io first (verified email)
+    snov_email = _snov_find_email(first, last, domain)
+    if snov_email:
+        return snov_email, "found"
+
+    # Fallback: pattern guess (no credits used)
+    email = f"{first}.{last}@{domain}" if last else f"{first}@{domain}"
+    return email, "guessed"
+
+
+# ── Snov.io ───────────────────────────────────────────────────────────────────
+
+def _snov_get_token() -> str | None:
+    """Get Snov.io OAuth access token."""
+    user_id = settings.SNOV_USER_ID.strip()
+    secret = settings.SNOV_SECRET.strip()
+    if not user_id or not secret:
+        return None
+    try:
+        body = urlencode({
+            "grant_type": "client_credentials",
+            "client_id": user_id,
+            "client_secret": secret,
+        }).encode()
+        req = Request(
+            "https://api.snov.io/v1/oauth/access_token",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
+            return data.get("access_token")
+    except Exception as e:
+        print(f"[Snov] Token error: {e}")
+        return None
+
+
+def _snov_find_email(first: str, last: str, domain: str) -> str | None:
+    """
+    Call Snov.io email finder API.
+    Only called when we already have a domain — avoids wasting credits.
+    Returns verified email string or None.
+    """
+    token = _snov_get_token()
+    if not token:
+        return None
+
+    try:
+        body = urlencode({
+            "access_token": token,
+            "first_name": first,
+            "last_name": last,
+            "domain": domain,
+        }).encode()
+        req = Request(
+            "https://api.snov.io/v1/get-emails-from-name",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+
+        if not data.get("success"):
+            return None
+
+        emails = data.get("data", [])
+        # Return first valid/verified email
+        for entry in emails:
+            email = entry.get("email", "")
+            status = entry.get("emailStatus", "")
+            if email and status in ("valid", "all"):
+                return email.lower()
+        # Return first email regardless of status if no verified one
+        if emails and emails[0].get("email"):
+            return emails[0]["email"].lower()
+
+        return None
+
+    except Exception as e:
+        print(f"[Snov] Email finder error: {e}")
+        return None
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _find_domain(text: str) -> str | None:
-    """Scan text for any known company using word-boundary regex."""
+    """Scan text for known company using word-boundary regex."""
     if not text:
         return None
     for pattern, domain in _COMPILED:
@@ -172,12 +257,12 @@ def _find_domain(text: str) -> str | None:
     return None
 
 
-def _build_email(full_name: str, domain: str) -> str | None:
-    """Generate firstname.lastname@domain pattern from full name."""
+def _split_name(full_name: str) -> tuple[str, str] | None:
+    """Split full name into (first, last). Returns None if name is unusable."""
     clean = re.sub(r"[^a-zA-Z\s]", "", full_name).strip().lower()
     parts = clean.split()
     if not parts:
         return None
     first = parts[0]
     last = parts[-1] if len(parts) > 1 else ""
-    return f"{first}.{last}@{domain}" if last else f"{first}@{domain}"
+    return first, last

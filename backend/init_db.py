@@ -88,6 +88,8 @@ TABLES = {
             score_breakdown   JSON             NULL,
             `rank`            INT UNSIGNED     NULL,
             raw_data          JSON             NULL,
+            email             VARCHAR(255)     NULL,
+            email_status      VARCHAR(20)      NULL,
             created_at        DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
             CONSTRAINT fk_candidates_request
@@ -188,6 +190,14 @@ def main() -> None:
         print(f"[ERROR] Could not connect to database '{DB_NAME}': {e}")
         sys.exit(1)
 
+    # Step 3: add new columns to existing tables (safe, idempotent)
+    try:
+        migrate_conn = get_connection(database=DB_NAME)
+        migrate_columns(migrate_conn)
+        migrate_conn.close()
+    except Exception as e:
+        print(f"  [warn] Column migration skipped: {e}")
+
     created = []
     skipped = []
 
@@ -215,6 +225,28 @@ def main() -> None:
     else:
         print("Done. All tables were already present — nothing to do.")
     print()
+
+
+def migrate_columns(conn: pymysql.Connection) -> None:
+    """Add new columns to existing tables without dropping data."""
+    migrations = [
+        ("candidates", "email",        "ALTER TABLE candidates ADD COLUMN email VARCHAR(255) NULL AFTER raw_data"),
+        ("candidates", "email_status", "ALTER TABLE candidates ADD COLUMN email_status VARCHAR(20) NULL AFTER email"),
+        ("candidates", "email_sent",   "ALTER TABLE candidates ADD COLUMN email_sent TINYINT(1) NULL AFTER email_status"),
+    ]
+    with conn.cursor() as cur:
+        for table, column, ddl in migrations:
+            cur.execute(
+                """SELECT COUNT(*) FROM information_schema.columns
+                   WHERE table_schema=%s AND table_name=%s AND column_name=%s""",
+                (DB_NAME, table, column),
+            )
+            (exists,) = cur.fetchone()
+            if not exists:
+                cur.execute(ddl)
+                print(f"  [+]   Column '{table}.{column}' added.")
+            else:
+                print(f"  [ok]  Column '{table}.{column}' already exists — skipped.")
 
 
 if __name__ == "__main__":

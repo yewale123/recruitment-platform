@@ -2,24 +2,49 @@ import { useState } from 'react'
 import ScoreBar from './ScoreBar'
 import ScoreBreakdown from './ScoreBreakdown'
 
-function EmailCell({ email, status, rank, requestStatus }) {
-  if (email && status === 'found') {
+function extractLinkedIn(summary) {
+  if (!summary) return null
+  const m = summary.match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s]+/)
+  return m ? m[0] : null
+}
+
+function EmailCell({ email, status, rank, requestStatus, sent, linkedinUrl }) {
+  if (email) {
+    const isVerified = status === 'found'
     return (
-      <a href={`mailto:${email}`} style={{ fontSize: '.78rem', color: 'var(--primary)', wordBreak: 'break-all' }}>
-        {email}
-      </a>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+        <a
+          href={`mailto:${email}`}
+          title={isVerified ? 'Verified email' : 'Pattern-generated — not verified'}
+          style={{ fontSize: '.75rem', color: isVerified ? 'var(--primary)' : 'var(--gray-600)', wordBreak: 'break-all' }}
+        >
+          {isVerified ? '' : '~'}{email}
+        </a>
+        {sent === true && (
+          <span style={{ fontSize: '.7rem', color: 'var(--success)', fontWeight: 600 }}>✓ Sent</span>
+        )}
+        {sent === false && (
+          <span style={{ fontSize: '.7rem', color: 'var(--danger)' }}>✗ Failed</span>
+        )}
+      </div>
     )
   }
-  if (email && status === 'guessed') {
-    return (
-      <span title="Pattern-generated — not verified" style={{ fontSize: '.78rem', color: 'var(--gray-600)', wordBreak: 'break-all' }}>
-        ~{email}
-      </span>
-    )
-  }
-  // Show spinner only while request is still running AND enrichment not done yet
   if (rank <= 10 && !status && requestStatus !== 'completed' && requestStatus !== 'failed') {
     return <span className="spinner" style={{ width: 12, height: 12, borderWidth: 2 }} />
+  }
+  if (status === 'not_found' && linkedinUrl) {
+    return (
+      <a
+        href={linkedinUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="btn btn-outline btn-sm"
+        title="Email not found — message on LinkedIn"
+        style={{ fontSize: '.7rem', whiteSpace: 'nowrap' }}
+      >
+        💬 Message
+      </a>
+    )
   }
   return <span className="text-muted">—</span>
 }
@@ -116,7 +141,14 @@ export default function CandidateTable({ candidates, requiredSkills = [], reques
                     <ScoreBar score={c.suitability_score} />
                   </td>
                   <td onClick={e => e.stopPropagation()}>
-                    <EmailCell email={c.email} status={c.email_status} rank={c.rank} requestStatus={requestStatus} />
+                    <EmailCell
+                      email={c.email}
+                      status={c.email_status}
+                      rank={c.rank}
+                      requestStatus={requestStatus}
+                      sent={c.email_sent}
+                      linkedinUrl={c.platform === 'linkedin' ? c.profile_url : extractLinkedIn(c.summary)}
+                    />
                   </td>
                   <td>
                     {c.profile_url

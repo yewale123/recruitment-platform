@@ -21,6 +21,8 @@ from app.models.candidate import Candidate
 from app.connectors import get_connector, RecruitmentCriteria
 from app.services import ranking_service
 from app.services.ai_service import generate_search_queries
+from app.services.email_service import find_email
+from app.services.email_sender import send_outreach_email
 
 
 def _now():
@@ -205,6 +207,61 @@ def rank_and_complete(platform_results: list[int], request_id: int):
         all_failed = all(j.status == "failed" for j in jobs)
         req.status = "failed" if all_failed else "completed"
         db.commit()
+
+        # Fire background email enrichment for top 10 candidates
+        if not all_failed:
+            enrich_emails.delay(request_id)
+
+    finally:
+        db.close()
+
+
+# ── Email enrichment ──────────────────────────────────────────────────────────
+
+@celery_app.task(name="tasks.enrich_emails")
+def enrich_emails(request_id: int):
+    """
+    Background task: find emails for top 10 ranked candidates.
+    Runs after rank_and_complete — does not block showing results.
+    Updates each candidate in DB as email is found (progressive).
+    """
+    db = SessionLocal()
+    try:
+        req = db.query(RecruitmentRequest).filter_by(id=request_id).first()
+        if not req:
+            return
+
+        top_candidates = (
+            db.query(Candidate)
+            .filter(Candidate.request_id == request_id)
+            .filter(Candidate.rank <= 10)
+            .order_by(Candidate.rank)
+            .all()
+        )
+
+        skills = req.required_skills if isinstance(req.required_skills, list) else []
+
+        for candidate in top_candidates:
+            try:
+                email, status = find_email(candidate)
+                candidate.email = email
+                candidate.email_status = status
+                db.commit()
+                print(f"[Email] #{candidate.rank} {candidate.full_name}: {email or status}")
+
+                # Auto-send outreach email if email found
+                if email and status in ("found", "guessed"):
+                    sent = send_outreach_email(
+                        to_email=email,
+                        candidate_name=candidate.full_name or "",
+                        job_title=req.title,
+                        skills=skills[:2],
+                    )
+                    candidate.email_sent = sent
+                    db.commit()
+
+            except Exception as e:
+                print(f"[Email] Failed for candidate {candidate.id}: {e}")
 
     finally:
         db.close()

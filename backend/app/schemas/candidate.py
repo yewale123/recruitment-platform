@@ -23,6 +23,9 @@ class CandidateResponse(BaseModel):
     summary: str | None
     suitability_score: float | None
     score_breakdown: ScoreBreakdown | None
+    email: str | None = None
+    email_status: str | None = None
+    email_sent: bool | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
