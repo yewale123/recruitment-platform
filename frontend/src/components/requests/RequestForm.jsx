@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 const PLATFORMS = [
   { id: 'linkedin', label: 'LinkedIn' },
+  { id: 'github',   label: 'GitHub' },
   { id: 'naukri',   label: 'Naukri' },
   { id: 'indeed',   label: 'Indeed' },
 ]
