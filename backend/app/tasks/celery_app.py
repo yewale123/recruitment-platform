@@ -1,5 +1,8 @@
+import logging
 from celery import Celery
 from app.config import get_settings
+
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 settings = get_settings()
 

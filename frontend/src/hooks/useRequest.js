@@ -11,34 +11,47 @@ export function useRequest(id) {
   const [isPolling, setIsPolling] = useState(false)
   const [error, setError] = useState(null)
   const intervalRef = useRef(null)
+  const emailsDoneRef = useRef(false)
+
+  const stopPolling = useCallback(() => {
+    setIsPolling(false)
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+      intervalRef.current = null
+    }
+  }, [])
 
   const fetchAll = useCallback(async () => {
     try {
       const req = await getRequest(id)
       setRequest(req)
 
-      // Fetch candidates when completed, OR when any job has found some (partial results)
       const hasPartial = req.scrape_jobs?.some(j => j.candidates_found > 0)
+      let latestCandidates = null
       if (req.status === 'completed' || hasPartial) {
         const cands = await getCandidates(id)
+        latestCandidates = cands.items
         setCandidates(cands.items)
       }
 
       setError(null)
 
       if (TERMINAL.has(req.status)) {
-        setIsPolling(false)
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current)
-          intervalRef.current = null
+        const emailsPending = (latestCandidates ?? []).some(
+          c => c.rank != null && c.rank <= 10 && c.email_status == null
+        )
+        if (!emailsPending) {
+          emailsDoneRef.current = true
+          stopPolling()
         }
+        // else: keep polling until emails are resolved
       }
     } catch (e) {
       setError(e.message)
     } finally {
       setIsLoading(false)
     }
-  }, [id])
+  }, [id, stopPolling])
 
   useEffect(() => {
     fetchAll()
@@ -46,14 +59,16 @@ export function useRequest(id) {
 
   useEffect(() => {
     if (!request) return
-    if (TERMINAL.has(request.status)) return
+    // Don't start a new interval if emails are already done
+    if (TERMINAL.has(request.status) && emailsDoneRef.current) return
     if (intervalRef.current) return
 
     setIsPolling(true)
     intervalRef.current = setInterval(fetchAll, POLL_INTERVAL)
 
     return () => {
-      if (intervalRef.current) {
+      // Only clear if emails are done — otherwise keep polling through status change
+      if (emailsDoneRef.current && intervalRef.current) {
         clearInterval(intervalRef.current)
         intervalRef.current = null
       }

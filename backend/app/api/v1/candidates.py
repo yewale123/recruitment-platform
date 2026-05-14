@@ -49,6 +49,9 @@ def get_candidates(
                 summary=c.summary,
                 suitability_score=float(c.suitability_score) if c.suitability_score is not None else None,
                 score_breakdown=breakdown,
+                email=c.email,
+                email_status=c.email_status,
+                email_sent=c.email_sent,
                 created_at=c.created_at,
             )
         )

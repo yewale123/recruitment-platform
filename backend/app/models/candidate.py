@@ -27,6 +27,9 @@ class Candidate(Base):
     score_breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     rank: Mapped[int | None] = mapped_column(nullable=True)
     raw_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    email_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    email_sent: Mapped[bool | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     request: Mapped["RecruitmentRequest"] = relationship(  # noqa: F821
