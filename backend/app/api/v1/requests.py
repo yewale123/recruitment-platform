@@ -74,6 +74,7 @@ def _to_response(req) -> RecruitmentRequestResponse:
                 platform=j.platform,
                 status=j.status,
                 candidates_found=j.candidates_found,
+                error_message=j.error_message,
                 started_at=j.started_at,
                 completed_at=j.completed_at,
             )

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { getRequest, getCandidates } from '../api/client'
 
 const TERMINAL = new Set(['completed', 'failed'])
-const POLL_INTERVAL = 5_000
+const POLL_INTERVAL = 3_000
 
 export function useRequest(id) {
   const [request, setRequest] = useState(null)
@@ -17,14 +17,15 @@ export function useRequest(id) {
       const req = await getRequest(id)
       setRequest(req)
 
-      if (req.status === 'completed') {
+      // Fetch candidates when completed, OR when any job has found some (partial results)
+      const hasPartial = req.scrape_jobs?.some(j => j.candidates_found > 0)
+      if (req.status === 'completed' || hasPartial) {
         const cands = await getCandidates(id)
         setCandidates(cands.items)
       }
 
       setError(null)
 
-      // Stop polling when terminal state is reached
       if (TERMINAL.has(req.status)) {
         setIsPolling(false)
         if (intervalRef.current) {
@@ -43,11 +44,10 @@ export function useRequest(id) {
     fetchAll()
   }, [fetchAll])
 
-  // Start polling once request is loaded and not yet in terminal state
   useEffect(() => {
     if (!request) return
     if (TERMINAL.has(request.status)) return
-    if (intervalRef.current) return  // already polling
+    if (intervalRef.current) return
 
     setIsPolling(true)
     intervalRef.current = setInterval(fetchAll, POLL_INTERVAL)
