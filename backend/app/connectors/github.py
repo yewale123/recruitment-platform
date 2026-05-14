@@ -21,6 +21,7 @@ import json
 import re
 from datetime import datetime, timezone
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from app.config import get_settings
@@ -81,7 +82,7 @@ class GitHubConnector(BasePlatformConnector):
         queries = self._build_gh_queries(criteria)
         max_results = min(criteria.max_results, 60)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         seen_logins: set[str] = set()
         all_candidates: list[RawCandidate] = []
@@ -102,7 +103,6 @@ class GitHubConnector(BasePlatformConnector):
             seen_logins.update(new_logins)
             print(f"[GitHub] → {len(new_logins)} new users")
 
-            # Fetch user details in batches (throttled to avoid rate limits)
             remaining = max_results - len(all_candidates)
             for login in new_logins[:remaining]:
                 try:
@@ -111,12 +111,12 @@ class GitHubConnector(BasePlatformConnector):
                     )
                     if candidate:
                         all_candidates.append(candidate)
-                    await asyncio.sleep(0.2)  # gentle throttle
+                    await asyncio.sleep(0.2)
                 except Exception as e:
                     print(f"[GitHub] User fetch failed for {login}: {e}")
 
             if i < len(queries) - 1:
-                await asyncio.sleep(1.0)  # pause between search queries
+                await asyncio.sleep(1.0)
 
         print(f"[GitHub] Total candidates: {len(all_candidates)}")
         return all_candidates
@@ -124,7 +124,7 @@ class GitHubConnector(BasePlatformConnector):
     async def get_profile(self, profile_url: str) -> RawCandidate | None:
         login = profile_url.rstrip("/").split("/")[-1]
         token = getattr(settings, "GITHUB_TOKEN", "").strip()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             return await loop.run_in_executor(
                 None, lambda: self._fetch_user(login, token=token)
@@ -144,7 +144,12 @@ class GitHubConnector(BasePlatformConnector):
         location = (criteria.location or "").strip()
         queries: list[str] = []
 
-        loc_part = f"location:{location}" if location and location.lower() not in ("remote", "any") else ""
+        # Quote multi-word locations so "New Delhi" → location:"New Delhi"
+        if location and location.lower() not in ("remote", "any"):
+            loc_val = f'"{location}"' if " " in location else location
+            loc_part = f"location:{loc_val}"
+        else:
+            loc_part = ""
 
         # Query 1: primary language + location
         primary_lang = None
@@ -219,7 +224,6 @@ class GitHubConnector(BasePlatformConnector):
             raise
 
     def _search_users(self, query: str, per_page: int, token: str) -> list[dict]:
-        from urllib.parse import urlencode
         params = urlencode({"q": f"{query} type:user", "per_page": per_page, "sort": "followers"})
         url = f"{_BASE}/search/users?{params}"
         data = self._gh_request(url, token)
