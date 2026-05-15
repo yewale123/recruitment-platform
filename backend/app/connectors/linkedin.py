@@ -433,6 +433,21 @@ class LinkedInConnector(BasePlatformConnector):
         data = await page.evaluate("""
             () => {
                 const getText = el => el ? el.innerText.trim() : null;
+
+                // Walk up from anchor to its containing section
+                const getSection = id => {
+                    const anchor = document.querySelector('#' + id);
+                    if (!anchor) return null;
+                    let el = anchor;
+                    for (let i = 0; i < 6; i++) {
+                        if (!el.parentElement) break;
+                        el = el.parentElement;
+                        if (el.tagName === 'SECTION') return el;
+                    }
+                    return anchor.parentElement;
+                };
+
+                // Try selectors in order, return first that has text
                 const firstMatch = (...sels) => {
                     for (const s of sels) {
                         const el = document.querySelector(s);
@@ -441,63 +456,78 @@ class LinkedInConnector(BasePlatformConnector):
                     return null;
                 };
 
-                // Name
+                // ── Name ──────────────────────────────────────────────────────
                 const nameEl = firstMatch(
-                    'h1.text-heading-xlarge', '.pv-top-card--list h1',
-                    '.ph5 h1', 'h1[class*="heading"]', 'h1'
+                    'h1.text-heading-xlarge',
+                    'h1[class*="heading"]',
+                    '.ph5 h1', 'h1'
                 );
 
-                // Headline
+                // ── Headline ──────────────────────────────────────────────────
                 const headlineEl = firstMatch(
                     '.text-body-medium.break-words',
                     '.pv-text-details__left-panel .text-body-medium',
                     '.ph5 .text-body-medium'
                 );
 
-                // Location
+                // ── Location ──────────────────────────────────────────────────
                 const locationEl = firstMatch(
                     'span.text-body-small.inline.t-black--light.break-words',
-                    '.pv-top-card--list .t-black--light.t-normal',
-                    '.pv-text-details__left-panel .pb2 span',
-                    '.ph5 span[class*="t-black--light"]'
+                    '.pv-text-details__left-panel span.t-black--light',
+                    '.ph5 span.t-black--light'
                 );
 
-                // Summary
+                // ── About / Summary ───────────────────────────────────────────
                 let summary = null;
-                const aboutSection = document.querySelector('#about');
-                if (aboutSection) {
-                    const parent = aboutSection.closest('section') || aboutSection.parentElement;
-                    const span = parent && parent.querySelector('span[aria-hidden="true"]');
-                    if (span) summary = getText(span);
+                const aboutSec = getSection('about');
+                if (aboutSec) {
+                    const spans = Array.from(aboutSec.querySelectorAll('span[aria-hidden="true"]'));
+                    for (const s of spans) {
+                        const t = getText(s);
+                        if (t && t.length > 30) { summary = t; break; }
+                    }
                 }
 
-                // Skills — visible on main profile page (top 5 shown without navigating away)
+                // ── Skills ────────────────────────────────────────────────────
                 const skills = [];
-                const skillsSec = document.querySelector('#skills');
+                const skillsSec = getSection('skills');
                 if (skillsSec) {
-                    const parent = skillsSec.closest('section') || skillsSec.parentElement;
-                    const skillEls = Array.from((parent || document).querySelectorAll(
-                        '.pvs-list__item--line-separated .t-bold span[aria-hidden="true"], '
-                        + '[class*="pvs-entity"] .t-bold span[aria-hidden="true"]'
-                    )).slice(0, 15);
-                    for (const el of skillEls) {
+                    // Strategy 1: bold spans (most common LinkedIn pattern)
+                    let els = Array.from(skillsSec.querySelectorAll(
+                        '.t-bold span[aria-hidden="true"]'
+                    )).slice(0, 20);
+                    // Strategy 2: any pvs-entity bold span
+                    if (!els.length) {
+                        els = Array.from(skillsSec.querySelectorAll(
+                            '[class*="pvs-entity"] .t-bold span[aria-hidden="true"]'
+                        )).slice(0, 20);
+                    }
+                    // Strategy 3: all aria-hidden spans that look like skill names
+                    if (!els.length) {
+                        els = Array.from(skillsSec.querySelectorAll(
+                            'span[aria-hidden="true"]'
+                        )).slice(0, 30);
+                    }
+                    for (const el of els) {
                         const txt = getText(el);
-                        if (txt && txt.length > 1 && txt.length < 60 && !skills.includes(txt)) {
+                        if (txt && txt.length > 1 && txt.length < 60
+                                && !txt.includes(' · ') && !skills.includes(txt)) {
                             skills.push(txt);
                         }
                     }
                 }
 
-                // Experience date ranges for year calculation
+                // ── Experience date ranges ────────────────────────────────────
                 let exp_texts = [];
-                const expSec = document.querySelector('#experience');
+                const expSec = getSection('experience');
                 if (expSec) {
-                    const parent = expSec.closest('section') || expSec.parentElement;
-                    exp_texts = Array.from((parent || document).querySelectorAll(
-                        'span.t-14.t-normal.t-black--light, '
-                        + '[class*="pvs-entity__caption"] span[aria-hidden="true"]'
-                    )).slice(0, 20).map(el => getText(el)).filter(Boolean);
+                    exp_texts = Array.from(expSec.querySelectorAll(
+                        'span[aria-hidden="true"]'
+                    )).map(el => getText(el))
+                      .filter(t => t && /\\d{4}/.test(t))
+                      .slice(0, 10);
                 }
+                // Fallback: scan whole page for date-range spans
                 if (!exp_texts.length) {
                     exp_texts = Array.from(document.querySelectorAll(
                         'span.t-14.t-normal.t-black--light'
