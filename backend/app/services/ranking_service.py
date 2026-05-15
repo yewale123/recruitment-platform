@@ -232,10 +232,18 @@ def _location_score(candidate: Candidate, req_location: str) -> float:
     if "remote" in cand_loc:
         return 15.0
 
-    if cand_loc == req_location:
+    # LinkedIn returns full strings like "Mumbai, Maharashtra, India"
+    # Extract primary city for comparison
+    cand_city = cand_loc.split(",")[0].strip()
+
+    if cand_city == req_location or cand_loc == req_location:
         return 20.0
 
-    if same_region(cand_loc, req_location):
+    # Required location appears anywhere in candidate's location string
+    if req_location in cand_loc:
+        return 20.0
+
+    if same_region(cand_city, req_location):
         return 10.0
 
     return 0.0
