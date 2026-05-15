@@ -108,6 +108,74 @@ def same_region(loc_a: str, loc_b: str) -> bool:
     return False
 
 
+# Comprehensive set of tech skills to recognise in headline text
+_HEADLINE_SKILLS: list[str] = sorted([
+    # Languages
+    "python", "java", "javascript", "typescript", "golang", "go", "ruby", "php",
+    "swift", "kotlin", "rust", "scala", "c++", "c#", "r",
+    # Web frameworks / libraries
+    "react", "angular", "vue", "django", "flask", "fastapi", "spring boot", "spring",
+    "node.js", "nodejs", "express", "next.js", "nuxt", "laravel", "rails",
+    "asp.net", "dotnet", ".net",
+    # Mobile
+    "android", "ios", "flutter", "react native",
+    # Data / ML / AI
+    "machine learning", "deep learning", "data science", "nlp", "computer vision",
+    "tensorflow", "pytorch", "keras", "pandas", "numpy", "scikit-learn",
+    "data engineering", "data analysis", "data analytics",
+    # Databases
+    "postgresql", "mysql", "mongodb", "redis", "elasticsearch", "cassandra",
+    "oracle", "sql server", "sqlite", "dynamodb", "sql", "nosql",
+    # Cloud / DevOps
+    "aws", "azure", "gcp", "google cloud", "docker", "kubernetes",
+    "terraform", "jenkins", "ci/cd", "devops", "linux",
+    # Other
+    "rest api", "graphql", "microservices", "git", "agile", "scrum",
+    "blockchain", "solidity", "cybersecurity", "networking",
+], key=len, reverse=True)  # longest first so "spring boot" matches before "spring"
+
+# Seniority → approximate years of experience
+_SENIORITY_EXP: list[tuple[str, float]] = [
+    ("principal", 12.0), ("architect", 10.0), ("lead", 8.0), ("staff", 8.0),
+    ("head of", 10.0), ("vp of", 12.0),
+    ("senior", 5.0), ("sr.", 5.0),
+    ("junior", 1.0), ("jr.", 1.0), ("fresher", 0.5), ("intern", 0.5),
+    ("entry level", 1.0),
+]
+
+
+def parse_skills_from_headline(headline: str) -> list[str]:
+    """Extract recognised tech skills mentioned in a LinkedIn headline."""
+    if not headline:
+        return []
+    text = headline.lower()
+    found: list[str] = []
+    seen: set[str] = set()
+    for skill in _HEADLINE_SKILLS:
+        if skill in text and skill not in seen:
+            found.append(skill)
+            seen.add(skill)
+    return found
+
+
+def parse_experience_from_headline(headline: str) -> float | None:
+    """
+    Extract experience years from headline text.
+    Tries explicit year mentions first ("5 yrs", "8+ years"),
+    then falls back to seniority signal estimation.
+    """
+    if not headline:
+        return None
+    explicit = parse_experience_years(headline)
+    if explicit is not None:
+        return explicit
+    text = headline.lower()
+    for signal, years in _SENIORITY_EXP:
+        if signal in text:
+            return years
+    return None
+
+
 def parse_experience_years(text: str) -> float | None:
     """
     Extract a float number of years from strings like:
