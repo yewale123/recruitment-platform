@@ -396,6 +396,28 @@ class LinkedInConnector(BasePlatformConnector):
 
         return candidates
 
+    async def _get_contact_info_email(self, page) -> str | None:
+        """Click the Contact info link, extract email from the modal, close it."""
+        try:
+            link = await page.query_selector('a[href*="overlay/contact-info"]')
+            if not link:
+                return None
+            await link.click()
+            await asyncio.sleep(1.5)
+            email_el = await page.query_selector('a[href^="mailto:"]')
+            email = None
+            if email_el:
+                href = await email_el.get_attribute("href") or ""
+                candidate_email = href.replace("mailto:", "").strip()
+                if "@" in candidate_email:
+                    email = candidate_email.lower()
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.5)
+            return email
+        except Exception as e:
+            print(f"[LinkedIn] Contact info extraction failed: {e}")
+            return None
+
     async def _parse_profile_page(self, page, url: str) -> RawCandidate | None:
         from playwright.async_api import TimeoutError as PWTimeout
 
@@ -510,7 +532,16 @@ class LinkedInConnector(BasePlatformConnector):
                 exp_years = parsed
                 break
 
+        # Try to grab email from Contact Info modal (public emails only)
+        contact_email = await self._get_contact_info_email(page)
+        if contact_email:
+            print(f"[LinkedIn] Contact info email found: {contact_email}")
+
         platform_id = base_url.rstrip("/").split("/")[-1]
+
+        raw_data: dict = {"source": "profile_page", "url": base_url}
+        if contact_email:
+            raw_data["email"] = contact_email
 
         return RawCandidate(
             platform=self.PLATFORM_NAME,
@@ -522,7 +553,7 @@ class LinkedInConnector(BasePlatformConnector):
             skills=clean_skills,
             profile_url=base_url,
             summary=data.get("summary"),
-            raw_data={"source": "profile_page", "url": base_url},
+            raw_data=raw_data,
         )
 
     async def _random_delay(self) -> None:

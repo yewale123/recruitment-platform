@@ -38,11 +38,6 @@ class Settings(BaseSettings):
     # Generate at: github.com → Settings → Developer settings → Personal access tokens
     GITHUB_TOKEN: str = ""
 
-    # Snov.io email finder (50 free credits/month)
-    # Get from: app.snov.io → Profile Settings → API
-    SNOV_USER_ID: str = ""
-    SNOV_SECRET: str = ""
-
     # Gmail SMTP — for sending automated outreach emails
     # App Password: myaccount.google.com/apppasswords
     GMAIL_USER: str = ""
