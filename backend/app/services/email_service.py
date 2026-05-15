@@ -2,26 +2,19 @@
 Email enrichment service.
 
 Strategy per platform:
-  GitHub   → extract public email from raw_data (free, accurate)
-  LinkedIn → find company domain from headline → call Snov.io with name+domain
-             Snov.io only called when domain is found (saves credits)
+  GitHub   → public email from raw_data (GitHub API, free)
+  LinkedIn → email from Contact Info modal (scraped during enrichment, free)
+             fallback: pattern-generate from company domain (unverified, marked ~)
 
 email_status values:
-  'found'     — verified email from Snov.io or GitHub public profile
-  'guessed'   — pattern-generated fallback (no Snov.io credits used)
+  'found'     — real email from GitHub profile or LinkedIn Contact Info
+  'guessed'   — pattern-generated fallback (firstname.lastname@company.com)
   'not_found' — could not determine any email
 """
 
-import json
 import re
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError
 
-from app.config import get_settings
 from app.models.candidate import Candidate
-
-settings = get_settings()
 
 # ── Company domain dictionary ─────────────────────────────────────────────────
 
@@ -139,7 +132,7 @@ def find_email(candidate: Candidate) -> tuple[str | None, str]:
     """
     Returns (email, status): 'found' | 'guessed' | 'not_found'
     """
-    # GitHub: use public email from raw_data
+    # GitHub: public email from GitHub API via raw_data
     if candidate.platform == "github":
         raw = candidate.raw_data or {}
         email = raw.get("email") or ""
@@ -147,7 +140,13 @@ def find_email(candidate: Candidate) -> tuple[str | None, str]:
             return email.lower().strip(), "found"
         return None, "not_found"
 
-    # LinkedIn: find domain → call Snov.io → fallback to pattern
+    # LinkedIn: check email scraped from Contact Info modal during enrichment
+    raw = candidate.raw_data or {}
+    contact_email = raw.get("email", "")
+    if contact_email and "@" in contact_email:
+        return contact_email.lower().strip(), "found"
+
+    # Fallback: pattern-generate from company domain (unverified)
     if not candidate.full_name:
         return None, "not_found"
 
@@ -161,88 +160,8 @@ def find_email(candidate: Candidate) -> tuple[str | None, str]:
         return None, "not_found"
 
     first, last = name_parts
-
-    # Try Snov.io first (verified email)
-    snov_email = _snov_find_email(first, last, domain)
-    if snov_email:
-        return snov_email, "found"
-
-    # Fallback: pattern guess (no credits used)
     email = f"{first}.{last}@{domain}" if last else f"{first}@{domain}"
     return email, "guessed"
-
-
-# ── Snov.io ───────────────────────────────────────────────────────────────────
-
-def _snov_get_token() -> str | None:
-    """Get Snov.io OAuth access token."""
-    user_id = settings.SNOV_USER_ID.strip()
-    secret = settings.SNOV_SECRET.strip()
-    if not user_id or not secret:
-        return None
-    try:
-        body = urlencode({
-            "grant_type": "client_credentials",
-            "client_id": user_id,
-            "client_secret": secret,
-        }).encode()
-        req = Request(
-            "https://api.snov.io/v1/oauth/access_token",
-            data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        with urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read())
-            return data.get("access_token")
-    except Exception as e:
-        print(f"[Snov] Token error: {e}")
-        return None
-
-
-def _snov_find_email(first: str, last: str, domain: str) -> str | None:
-    """
-    Call Snov.io email finder API.
-    Only called when we already have a domain — avoids wasting credits.
-    Returns verified email string or None.
-    """
-    token = _snov_get_token()
-    if not token:
-        return None
-
-    try:
-        body = urlencode({
-            "access_token": token,
-            "first_name": first,
-            "last_name": last,
-            "domain": domain,
-        }).encode()
-        req = Request(
-            "https://api.snov.io/v1/get-emails-from-name",
-            data=body,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        with urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-
-        if not data.get("success"):
-            return None
-
-        emails = data.get("data", [])
-        # Return first valid/verified email
-        for entry in emails:
-            email = entry.get("email", "")
-            status = entry.get("emailStatus", "")
-            if email and status in ("valid", "all"):
-                return email.lower()
-        # Return first email regardless of status if no verified one
-        if emails and emails[0].get("email"):
-            return emails[0]["email"].lower()
-
-        return None
-
-    except Exception as e:
-        print(f"[Snov] Email finder error: {e}")
-        return None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
