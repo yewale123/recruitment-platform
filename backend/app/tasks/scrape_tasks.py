@@ -20,6 +20,7 @@ from app.models.scrape_job import ScrapeJob
 from app.models.candidate import Candidate
 from app.connectors import get_connector, RecruitmentCriteria
 from app.services import ranking_service
+from app.utils.text_utils import parse_skills_from_headline, parse_experience_from_headline
 from app.services.ai_service import generate_search_queries
 from app.services.email_service import find_email
 from app.services.email_sender import send_outreach_email
@@ -132,6 +133,12 @@ def scrape_platform(self, scrape_job_id: int):
 
         inserted = 0
         for raw in raw_candidates:
+            # Fill missing skills + experience from headline for card-only candidates
+            skills = raw.skills or parse_skills_from_headline(raw.headline or "")
+            exp_years = raw.experience_years
+            if exp_years is None:
+                exp_years = parse_experience_from_headline(raw.headline or "")
+
             candidate = Candidate(
                 request_id=req.id,
                 scrape_job_id=job.id,
@@ -140,8 +147,8 @@ def scrape_platform(self, scrape_job_id: int):
                 full_name=_trunc(raw.full_name, 255),
                 headline=_trunc(raw.headline, 500),
                 location=_trunc(raw.location, 255),
-                experience_years=raw.experience_years,
-                skills=raw.skills,
+                experience_years=exp_years,
+                skills=skills,
                 profile_url=_trunc(raw.profile_url, 1000),
                 summary=raw.summary,
                 raw_data=raw.raw_data,
