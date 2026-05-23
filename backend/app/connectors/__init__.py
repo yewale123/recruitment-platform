@@ -1,13 +1,9 @@
 from app.connectors.base import BasePlatformConnector, RecruitmentCriteria, RawCandidate
 from app.connectors.linkedin import LinkedInConnector
-from app.connectors.naukri import NaukriConnector
-from app.connectors.indeed import IndeedConnector
 from app.connectors.github import GitHubConnector
 
 CONNECTOR_REGISTRY: dict[str, type[BasePlatformConnector]] = {
     "linkedin": LinkedInConnector,
-    "naukri": NaukriConnector,
-    "indeed": IndeedConnector,
     "github": GitHubConnector,
 }
 

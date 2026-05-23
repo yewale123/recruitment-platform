@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     NAUKRI_SESSION_FILE: str = "naukri_session.json"
     INDEED_SESSION_FILE: str = "indeed_session.json"
     MAX_CANDIDATES_PER_PLATFORM: int = 50
-    SCRAPE_ENRICH_LIMIT: int = 5        # profiles to visit for full data (lower = faster)
+    SCRAPE_ENRICH_LIMIT: int = 15       # profiles to visit for full data (lower = faster)
     SCRAPE_DELAY_MIN: float = 0.5       # seconds between requests
     SCRAPE_DELAY_MAX: float = 1.5
 
@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # GitHub API token (optional but strongly recommended — raises limit from 60/hr to 5000/hr)
     # Generate at: github.com → Settings → Developer settings → Personal access tokens
     GITHUB_TOKEN: str = ""
+
+    # Demo mode — if set, all outreach emails go to this address instead of real candidates
+    DEMO_EMAIL: str = ""
 
     # Gmail SMTP — for sending automated outreach emails
     # App Password: myaccount.google.com/apppasswords

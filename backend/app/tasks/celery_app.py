@@ -1,6 +1,7 @@
 import logging
 from celery import Celery
 from app.config import get_settings
+from celery.schedules import crontab  # noqa: F401
 
 logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
@@ -18,7 +19,8 @@ celery_app.conf.update(
     result_serializer="json",
     accept_content=["json"],
     result_expires=86400,          # task results kept for 24 hours
-    task_acks_late=True,           # ack after task completes (safer on crashes)
-    worker_prefetch_multiplier=1,  # one task at a time per worker
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
     timezone="UTC",
+    beat_schedule={},
 )

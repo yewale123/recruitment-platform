@@ -52,6 +52,11 @@ def get_candidates(
                 email=c.email,
                 email_status=c.email_status,
                 email_sent=c.email_sent,
+                resume_received=c.resume_received,
+                resume_score=float(c.resume_score) if c.resume_score is not None else None,
+                resume_breakdown=c.resume_breakdown,
+                resume_parsed_data=c.resume_parsed_data,
+                interview_questions=c.interview_questions,
                 created_at=c.created_at,
             )
         )

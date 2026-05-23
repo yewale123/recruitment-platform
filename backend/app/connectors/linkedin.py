@@ -85,6 +85,7 @@ class LinkedInConnector(BasePlatformConnector):
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
                 headless=True,
+                channel="chrome",
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
@@ -92,9 +93,6 @@ class LinkedInConnector(BasePlatformConnector):
                 ],
             )
             context = await self._load_session(browser)
-            await context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
             page = await context.new_page()
 
             try:
@@ -131,17 +129,38 @@ class LinkedInConnector(BasePlatformConnector):
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(
                 headless=True,
-                args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+                channel="chrome",
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
             )
             context = await self._load_session(browser)
-            await context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
             page = await context.new_page()
             try:
                 return await self._parse_profile_page(page, profile_url)
             except Exception as e:
                 print(f"[LinkedIn] Profile fetch failed for {profile_url}: {e}")
+                return None
+            finally:
+                await browser.close()
+
+    async def enrich_single_profile(self, profile_url: str) -> RawCandidate | None:
+        """
+        Open one LinkedIn profile in a fresh browser and extract full data
+        (name, headline, location, skills, experience, email from Contact Info).
+        Used to backfill top-ranked candidates that were not enriched during search.
+        """
+        from playwright.async_api import async_playwright
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(
+                headless=True,
+                channel="chrome",
+                args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            context = await self._load_session(browser)
+            page = await context.new_page()
+            try:
+                return await self._parse_profile_page(page, profile_url)
+            except Exception as e:
+                print(f"[LinkedIn] enrich_single_profile failed for {profile_url}: {e}")
                 return None
             finally:
                 await browser.close()
@@ -159,6 +178,17 @@ class LinkedInConnector(BasePlatformConnector):
             viewport={"width": 1280, "height": 800},
             locale="en-US",
         )
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            const _origQuery = window.navigator.permissions.query.bind(navigator.permissions);
+            window.navigator.permissions.query = (p) =>
+                p.name === 'notifications'
+                    ? Promise.resolve({ state: Notification.permission })
+                    : _origQuery(p);
+        """)
         if session_file.exists():
             cookies = json.loads(session_file.read_text())
             await context.add_cookies(cookies)
@@ -181,41 +211,51 @@ class LinkedInConnector(BasePlatformConnector):
         location: str | None = None,
     ) -> list[RawCandidate]:
         skip_loc = not location or location.lower() in ("remote", "any", "anywhere", "")
+
+        # Embed location in keywords — geoUrn is too restrictive for accounts
+        # with few connections (returns 0 results outside your network).
         if not skip_loc:
-            geo = _geo_param(location)
-            if geo:
-                # Known city → use LinkedIn's geoUrn filter (most precise)
-                encoded = quote_plus(query)
-                search_url = (
-                    f"https://www.linkedin.com/search/results/people/"
-                    f"?keywords={encoded}&geoUrn={geo}&origin=GLOBAL_SEARCH_HEADER"
-                )
-                print(f"[LinkedIn] Location filter: {location} (geoUrn)")
-            else:
-                # Unknown city → append to keywords as fallback
-                encoded = quote_plus(f"{query} {location}")
-                search_url = (
-                    f"https://www.linkedin.com/search/results/people/"
-                    f"?keywords={encoded}&origin=GLOBAL_SEARCH_HEADER"
-                )
-                print(f"[LinkedIn] Location filter: {location} (keyword fallback)")
+            encoded = quote_plus(f"{query} {location}")
+            print(f"[LinkedIn] Location filter: {location} (keyword)")
         else:
             encoded = quote_plus(query)
-            search_url = (
-                f"https://www.linkedin.com/search/results/people/"
-                f"?keywords={encoded}&origin=GLOBAL_SEARCH_HEADER"
-            )
+
+        search_url = (
+            f"https://www.linkedin.com/search/results/people/"
+            f"?keywords={encoded}&origin=GLOBAL_SEARCH_HEADER"
+        )
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
         await asyncio.sleep(2)
         await self._scroll_page(page)
 
         candidates: list[RawCandidate] = []
+        tried_no_loc = skip_loc  # track whether we already dropped the location
 
         while len(candidates) < max_count:
             page_cards = await self._extract_cards_via_js(page)
 
             if not page_cards:
-                print("[LinkedIn] No result cards found — stopping.")
+                if not tried_no_loc:
+                    # Retry without location — new accounts see limited results
+                    print(f"[LinkedIn] 0 results with location '{location}' — retrying without location")
+                    tried_no_loc = True
+                    encoded_no_loc = quote_plus(query)
+                    search_url_no_loc = (
+                        f"https://www.linkedin.com/search/results/people/"
+                        f"?keywords={encoded_no_loc}&origin=GLOBAL_SEARCH_HEADER"
+                    )
+                    await page.goto(search_url_no_loc, wait_until="domcontentloaded", timeout=30_000)
+                    await asyncio.sleep(2)
+                    await self._scroll_page(page)
+                    continue  # re-check page_cards after reload
+
+                # Save screenshot to debug what LinkedIn is showing
+                try:
+                    screenshot_path = "linkedin_debug_headless.png"
+                    await page.screenshot(path=screenshot_path, full_page=True)
+                    print(f"[LinkedIn] No result cards found — screenshot saved to {screenshot_path}")
+                except Exception:
+                    print("[LinkedIn] No result cards found — stopping.")
                 break
 
             for raw in page_cards:
@@ -293,98 +333,96 @@ class LinkedInConnector(BasePlatformConnector):
         await asyncio.sleep(0.5)
 
     async def _extract_cards_via_js(self, page) -> list[RawCandidate]:
-        raw_list = await page.evaluate("""
+        diag = await page.evaluate("""
             () => {
                 const results = [];
-                const getText = el => el ? el.innerText.trim() : null;
+                const seen = new Set();
 
-                const getNameFromLink = (linkEl) => {
-                    const ariaSpan = linkEl.querySelector('span[aria-hidden="true"]');
-                    if (ariaSpan && ariaSpan.innerText.trim()) return ariaSpan.innerText.trim();
-                    const clone = linkEl.cloneNode(true);
-                    clone.querySelectorAll('.visually-hidden, [aria-hidden="false"]').forEach(el => el.remove());
-                    return clone.innerText.trim() || null;
+                const nameFromLink = (a) => {
+                    const sp = a.querySelector('span[aria-hidden="true"]');
+                    if (sp) {
+                        const t = sp.innerText.trim().split('\\n')[0].trim();
+                        if (t.length > 1 && t.length < 80) return t;
+                    }
+                    const clone = a.cloneNode(true);
+                    clone.querySelectorAll('[class*="visually-hidden"], .sr-only').forEach(e => e.remove());
+                    const t = clone.innerText.trim().split('\\n')[0].trim();
+                    return (t.length > 1 && t.length < 80) ? t : null;
                 };
 
-                let containers = [];
-                const containerSels = [
-                    'li[class*="result-container"]',
-                    'div.entity-result',
-                    'li[class*="reusable-search"]',
-                    '[data-view-name*="search-entity"]',
-                    'li.search-result',
-                ];
-                for (const sel of containerSels) {
-                    const found = Array.from(document.querySelectorAll(sel));
-                    if (found.length > 0) { containers = found; break; }
-                }
+                const root = document.querySelector('main')
+                    || document.querySelector('[class*="scaffold-layout__main"]')
+                    || document.querySelector('[role="main"]')
+                    || document.body;
 
-                if (containers.length === 0) {
-                    const links = Array.from(document.querySelectorAll('a[href*="/in/"]'))
-                        .filter(a => /\/in\/[\w\-]+/.test(a.getAttribute("href") || ""));
-                    const seen = new Set();
-                    for (const link of links) {
-                        const href = link.getAttribute("href").split("?")[0];
-                        if (seen.has(href)) continue;
-                        seen.add(href);
-                        let card = link;
-                        for (let i = 0; i < 8; i++) {
-                            if (!card.parentElement) break;
-                            card = card.parentElement;
-                            if (card.tagName === "LI") break;
+                const allLinks = Array.from(root.querySelectorAll('a[href*="/in/"]'));
+                let noNameCount = 0;
+
+                for (const link of allLinks) {
+                    const rawHref = (link.getAttribute('href') || '').split('?')[0];
+                    if (!rawHref || seen.has(rawHref)) continue;
+
+                    const name = nameFromLink(link);
+                    if (!name) { noNameCount++; continue; }
+
+                    seen.add(rawHref);
+                    const url = rawHref.startsWith('http') ? rawHref : 'https://www.linkedin.com' + rawHref;
+
+                    let headline = null, location = null;
+                    let el = link.parentElement;
+                    for (let i = 0; i < 12 && el; i++) {
+                        const h = el.querySelector(
+                            '[class*="primary-subtitle"],[class*="subline-level-1"],.entity-result__primary-subtitle'
+                        );
+                        if (h) {
+                            headline = h.innerText.trim().split('\\n')[0].trim() || null;
+                            const l = el.querySelector(
+                                '[class*="secondary-subtitle"],[class*="subline-level-2"],.entity-result__secondary-subtitle'
+                            );
+                            if (l) location = l.innerText.trim().split('\\n')[0].trim() || null;
+                            break;
                         }
-                        const headlineEl = card.querySelector(
-                            '[class*="subline-level-1"],[class*="primary-subtitle"],.entity-result__primary-subtitle'
-                        );
-                        const locationEl = card.querySelector(
-                            '[class*="subline-level-2"],[class*="secondary-subtitle"],.entity-result__secondary-subtitle'
-                        );
-                        results.push({
-                            profile_url: href.startsWith("http") ? href : "https://www.linkedin.com" + href,
-                            full_name: getNameFromLink(link),
-                            headline: getText(headlineEl),
-                            location: getText(locationEl),
-                        });
+                        el = el.parentElement;
                     }
-                    return results;
-                }
 
-                for (const card of containers) {
-                    const linkEl = card.querySelector('a[href*="/in/"]');
-                    if (!linkEl) continue;
-                    const href = (linkEl.getAttribute("href") || "").split("?")[0];
-                    if (!href) continue;
-
-                    const headlineEl = card.querySelector(
-                        '[class*="subline-level-1"],[class*="primary-subtitle"],.entity-result__primary-subtitle'
-                    );
-                    const locationEl = card.querySelector(
-                        '[class*="subline-level-2"],[class*="secondary-subtitle"],.entity-result__secondary-subtitle'
-                    );
-                    results.push({
-                        profile_url: href.startsWith("http") ? href : "https://www.linkedin.com" + href,
-                        full_name: getNameFromLink(linkEl),
-                        headline: getText(headlineEl),
-                        location: getText(locationEl),
-                    });
+                    results.push({ profile_url: url, full_name: name, headline, location });
                 }
-                return results;
+                return {
+                    results,
+                    rootTag: root.tagName,
+                    totalLinks: allLinks.length,
+                    namedLinks: results.length,
+                    noNameLinks: noNameCount,
+                    pageTitle: document.title,
+                };
             }
         """)
+
+        print(f"[LinkedIn] JS extract: root=<{diag.get('rootTag')}> "
+              f"totalLinks={diag.get('totalLinks')} "
+              f"named={diag.get('namedLinks')} noName={diag.get('noNameLinks')} "
+              f"title='{diag.get('pageTitle','')[:60]}'")
+
+        raw_list = diag.get("results", [])
 
         candidates: list[RawCandidate] = []
         seen_urls: set[str] = set()
 
         for item in (raw_list or []):
             profile_url = item.get("profile_url", "")
+            full_name = item.get("full_name") or ""
+            # Skip entries without a name — these are nav-bar links or other
+            # non-result anchors that happen to match the /in/ pattern
             if not profile_url or profile_url in seen_urls or "/in/" not in profile_url:
+                continue
+            if not full_name.strip():
                 continue
             seen_urls.add(profile_url)
             platform_id = profile_url.rstrip("/").split("/")[-1] or profile_url
             candidates.append(RawCandidate(
                 platform=self.PLATFORM_NAME,
                 platform_id=platform_id,
-                full_name=item.get("full_name"),
+                full_name=full_name,
                 headline=item.get("headline"),
                 location=item.get("location"),
                 experience_years=None,
@@ -426,7 +464,11 @@ class LinkedInConnector(BasePlatformConnector):
         try:
             await page.goto(base_url, wait_until="domcontentloaded", timeout=30_000)
             await asyncio.sleep(2)
-            await self._scroll_page(page)
+            # Scroll to bottom so Experience/Skills lazy sections load, then back to top
+            await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(1.5)
+            await page.evaluate("() => window.scrollTo(0, 0)")
+            await asyncio.sleep(0.5)
         except PWTimeout:
             return None
 
@@ -473,7 +515,9 @@ class LinkedInConnector(BasePlatformConnector):
                 // ── Location ──────────────────────────────────────────────────
                 const locationEl = firstMatch(
                     'span.text-body-small.inline.t-black--light.break-words',
+                    'span[class*="t-black--light"][class*="break-words"]',
                     '.pv-text-details__left-panel span.t-black--light',
+                    '.pv-top-card--list-bullet span',
                     '.ph5 span.t-black--light'
                 );
 

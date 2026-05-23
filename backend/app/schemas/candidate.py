@@ -26,6 +26,11 @@ class CandidateResponse(BaseModel):
     email: str | None = None
     email_status: str | None = None
     email_sent: bool | None = None
+    resume_received: bool | None = None
+    resume_score: float | None = None
+    resume_breakdown: dict | None = None
+    resume_parsed_data: dict | None = None
+    interview_questions: list | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

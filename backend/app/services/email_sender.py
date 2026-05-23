@@ -30,6 +30,11 @@ def send_outreach_email(
         print("[Email] Gmail not configured — skipping send")
         return False
 
+    # Demo mode — redirect all emails to DEMO_EMAIL if set
+    demo_email = getattr(settings, "DEMO_EMAIL", "").strip()
+    if demo_email:
+        to_email = demo_email
+
     first_name = candidate_name.split()[0].capitalize() if candidate_name else "there"
     skill1 = skills[0] if len(skills) > 0 else ""
     skill2 = skills[1] if len(skills) > 1 else ""

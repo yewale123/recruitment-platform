@@ -225,12 +225,63 @@ def rank_and_complete(platform_results: list[int], request_id: int):
 
 # ── Email enrichment ──────────────────────────────────────────────────────────
 
+def _backfill_linkedin_profile(db, candidate: Candidate) -> None:
+    """
+    Visit a LinkedIn profile page to fill in missing skills, experience, location,
+    and email (from Contact Info modal) for a candidate that was not enriched
+    during the initial search scrape.
+    """
+    if not candidate.profile_url:
+        return
+    try:
+        from app.connectors.linkedin import LinkedInConnector
+        conn = LinkedInConnector()
+        raw = asyncio.run(conn.enrich_single_profile(candidate.profile_url))
+        if not raw:
+            return
+
+        updated = []
+        if raw.skills and not candidate.skills:
+            candidate.skills = raw.skills
+            updated.append(f"skills={len(raw.skills)}")
+        if raw.experience_years is not None and candidate.experience_years is None:
+            candidate.experience_years = raw.experience_years
+            updated.append(f"exp={raw.experience_years}yrs")
+        if raw.location and not candidate.location:
+            candidate.location = raw.location
+            updated.append("location")
+        if raw.summary and not candidate.summary:
+            candidate.summary = raw.summary
+        if raw.full_name and not candidate.full_name:
+            candidate.full_name = raw.full_name
+        if raw.headline and not candidate.headline:
+            candidate.headline = raw.headline
+
+        # Store Contact Info email in raw_data so find_email() picks it up
+        contact_email = (raw.raw_data or {}).get("email")
+        if contact_email:
+            raw_data = dict(candidate.raw_data or {})
+            raw_data["email"] = contact_email
+            candidate.raw_data = raw_data
+            updated.append("email")
+
+        db.commit()
+        if updated:
+            print(f"[Enrich] #{candidate.rank} {candidate.full_name}: backfilled {', '.join(updated)}")
+
+    except Exception as e:
+        print(f"[Enrich] Profile backfill failed for {candidate.full_name}: {e}")
+
+
 @celery_app.task(name="tasks.enrich_emails")
 def enrich_emails(request_id: int):
     """
-    Background task: find emails for top 10 ranked candidates.
-    Runs after rank_and_complete — does not block showing results.
-    Updates each candidate in DB as email is found (progressive).
+    Background task — three phases:
+      Phase 1: Backfill LinkedIn profile data (skills/exp/location/email) for
+               top-10 candidates that were not visited during the search scrape.
+      Phase 2: Re-rank ALL candidates now that profile data is complete, so
+               scores reflect actual skills/experience rather than headline guesses.
+      Phase 3: Find emails + send outreach for the (updated) top 10.
     """
     db = SessionLocal()
     try:
@@ -238,7 +289,10 @@ def enrich_emails(request_id: int):
         if not req:
             return
 
-        top_candidates = (
+        skills_list = req.required_skills if isinstance(req.required_skills, list) else []
+
+        # ── Phase 1: backfill profiles ────────────────────────────────────────
+        top10 = (
             db.query(Candidate)
             .filter(Candidate.request_id == request_id)
             .filter(Candidate.rank <= 10)
@@ -246,9 +300,39 @@ def enrich_emails(request_id: int):
             .all()
         )
 
-        skills = req.required_skills if isinstance(req.required_skills, list) else []
+        backfilled = 0
+        for candidate in top10:
+            needs_backfill = (
+                candidate.platform == "linkedin"
+                and candidate.profile_url
+                and (not candidate.skills or candidate.experience_years is None)
+            )
+            if needs_backfill:
+                print(f"[Enrich] #{candidate.rank} {candidate.full_name}: visiting profile…")
+                _backfill_linkedin_profile(db, candidate)
+                backfilled += 1
 
-        for candidate in top_candidates:
+        # ── Phase 2: re-rank with complete data ───────────────────────────────
+        if backfilled > 0:
+            all_candidates = (
+                db.query(Candidate)
+                .filter(Candidate.request_id == request_id)
+                .all()
+            )
+            ranking_service.score_and_rank(all_candidates, req)
+            db.commit()
+            print(f"[Enrich] Re-ranked {len(all_candidates)} candidates after backfilling {backfilled} profiles")
+
+        # ── Phase 3: email + outreach for (updated) top 10 ───────────────────
+        top10 = (
+            db.query(Candidate)
+            .filter(Candidate.request_id == request_id)
+            .filter(Candidate.rank <= 10)
+            .order_by(Candidate.rank)
+            .all()
+        )
+
+        for candidate in top10:
             try:
                 email, status = find_email(candidate)
                 candidate.email = email
@@ -256,13 +340,12 @@ def enrich_emails(request_id: int):
                 db.commit()
                 print(f"[Email] #{candidate.rank} {candidate.full_name}: {email or status}")
 
-                # Auto-send outreach email if email found
                 if email and status in ("found", "guessed"):
                     sent = send_outreach_email(
                         to_email=email,
                         candidate_name=candidate.full_name or "",
                         job_title=req.title,
-                        skills=skills[:2],
+                        skills=skills_list[:2],
                     )
                     candidate.email_sent = sent
                     db.commit()
@@ -272,3 +355,5 @@ def enrich_emails(request_id: int):
 
     finally:
         db.close()
+
+

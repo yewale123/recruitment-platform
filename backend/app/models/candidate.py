@@ -30,6 +30,11 @@ class Candidate(Base):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     email_sent: Mapped[bool | None] = mapped_column(nullable=True)
+    resume_received: Mapped[bool | None] = mapped_column(nullable=True)
+    resume_score: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    resume_breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    resume_parsed_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    interview_questions: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     request: Mapped["RecruitmentRequest"] = relationship(  # noqa: F821
